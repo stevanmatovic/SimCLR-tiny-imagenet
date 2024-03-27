@@ -44,18 +44,24 @@ class SimCLR(nn.Module):
 
 
 
-def nt_xent(z_i, z_j, t=0.5):
-    x = torch.cat([z_i, z_j], dim=0)
-    x = F.normalize(x, dim=1)
-    x_scores =  (x @ x.t()).clamp(min=1e-7)  # normalized cosine similarity scores
-    x_scale = x_scores / t   # scale with temperature
+class NTXentLoss(nn.Module):
+    def __init__(self, batch_size, device, t=0.5):
+        super(NTXentLoss, self).__init__()
+        self.t = t
+        # moving targets to device once to avoid overhead
+        # requires all batches to be of same size
+        targets = torch.arange(2*batch_size)
+        targets = torch.cat([targets[batch_size:], targets[:batch_size]]).long()
+        self.targets = targets.to(device) 
 
-    # (2N-1)-way softmax without the score of i-th entry itself.
-    # Set the diagonals to be large negative values, which become zeros after softmax.
-    x_scale = x_scale - torch.eye(x_scale.size(0)).to(x_scale.device) * 1e5
+    def forward(self, z_i, z_j):
+        x = torch.cat([z_i, z_j], dim=0)
+        x = F.normalize(x, dim=1)
+        x_scores =  (x @ x.t()).clamp(min=1e-7)  # normalized cosine similarity scores
+        x_scale = x_scores / self.t   # scale with temperature
 
-    # targets 2N elements.
-    N = z_i.size(0)
-    targets = torch.arange(2*N)
-    targets = torch.cat([targets[N:], targets[:N]])
-    return F.cross_entropy(x_scale, targets.long().to(x_scale.device))
+        # Set the diagonals to be large negative values, which become zeros after softmax.
+        x_scale.fill_diagonal_(-1e5)
+
+        # targets 2N elements.
+        return F.cross_entropy(x_scale, self.targets)
